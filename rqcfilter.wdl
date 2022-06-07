@@ -1,20 +1,21 @@
 workflow jgi_rqcfilter {
     Array[File] input_files
     String? outdir
-    String bbtools_container="microbiomedata/bbtools:38.94"
-    String database="/refdata"
+    #String bbtools_container="microbiomedata/bbtools:38.94"
+    String bbtools_container="microbiomedata/bbtools@sha256:b433db110ef6cdcac4d236afabff95bfe153228063f5d9234306e78657ddbe36"
+    String database="/refdata/nmdc"
     Boolean chastityfilter=true
-    String? memory
-    String? threads
+	String memory="60G"
+	String threads=16
 
     scatter(file in input_files) {
         call rqcfilter{
              input:  input_file=file,
                      container=bbtools_container,
                      database=database,
-		     chastityfilter_flag=chastityfilter,
-                     memory=memory,
-                     threads=threads
+		             chastityfilter_flag=chastityfilter,
+					 memory=memory,
+					 threads=threads
         }
     }
 
@@ -23,10 +24,10 @@ workflow jgi_rqcfilter {
     if (defined(outdir)){
         call make_output {
            	input: outdir=outdir,
-                       filtered=rqcfilter.filtered,
-                       stats=rqcfilter.stat,
-                       stats2=rqcfilter.stat2,
-                       container=bbtools_container
+                   filtered=rqcfilter.filtered,
+                   stats=rqcfilter.stat,
+                   stats2=rqcfilter.stat2,
+                   container=bbtools_container
         }
     }
 
@@ -36,10 +37,10 @@ workflow jgi_rqcfilter {
         Array[File] stats2 = rqcfilter.stat2
         Array[File]? clean_fastq_files = make_output.fastq_files
     }
-    
+
     parameter_meta {
         input_files: "illumina paired-end interleaved fastq files"
-	outdir: "The final output directory path"
+	    outdir: "The final output directory path"
         database : "database path to RQCFilterData directory"
         clean_fastq_files: "after QC fastq files"
         memory: "optional for jvm memory for bbtools, ex: 32G"
@@ -56,9 +57,9 @@ task rqcfilter {
      File input_file
      String container
      String database
+	 String memory
+	 Int threads
      Boolean chastityfilter_flag=true
-     String? memory
-     String? threads
      String filename_outlog="stdout.log"
      String filename_errlog="stderr.log"
      String filename_stat="filtered/filterStats.txt"
@@ -70,17 +71,14 @@ task rqcfilter {
 
      runtime {
             docker: container
-            memory: "70 GB"
-            cpu:  8
-            database: database
-            runtime_minutes: ceil(size(input_file, "GB")*60)
+            memory: memory
+            cpu: threads 
+            time: ceil(size(input_file, "GB")*60)
      }
 
      command<<<
-        #sleep 30
-        export TIME="time result\ncmd:%C\nreal %es\nuser %Us \nsys  %Ss \nmemory:%MKB \ncpu %P"
         set -eo pipefail
-        rqcfilter2.sh -Xmx${default="60G" memory} threads=${jvm_threads} ${chastityfilter} jni=t in=${input_file} path=filtered rna=f trimfragadapter=t qtrim=r trimq=0 maxns=3 maq=3 minlen=51 mlf=0.33 phix=t removehuman=t removedog=t removecat=t removemouse=t khist=t removemicrobes=t sketch kapa=t clumpify=t tmpdir= barcodefilter=f trimpolyg=5 usejni=f rqcfilterdata=${database}/RQCFilterData  > >(tee -a ${filename_outlog}) 2> >(tee -a ${filename_errlog} >&2)
+        rqcfilter2.sh -Xmx${default="60G" memory} -Xms"20G" threads=${jvm_threads} ${chastityfilter} jni=t in=${input_file} path=filtered rna=f trimfragadapter=t qtrim=r trimq=0 maxns=3 maq=3 minlen=51 mlf=0.33 phix=t removehuman=t removedog=t removecat=t removemouse=t khist=t removemicrobes=t sketch kapa=t clumpify=t tmpdir= barcodefilter=f trimpolyg=5 usejni=f rqcfilterdata=${database}/RQCFilterData  > >(tee -a ${filename_outlog}) 2> >(tee -a ${filename_errlog} >&2)
 
         python <<CODE
         import json
@@ -95,23 +93,24 @@ task rqcfilter {
             json.dump(d, outfile)
         CODE
      >>>
+
      output {
             File stdout = filename_outlog
             File stderr = filename_errlog
             File stat = filename_stat
             File stat2 = filename_stat2
-            File filtered = glob("filtered/*fastq.gz")[0]
+			File filtered = "filtered/raw.anqdpht.fastq.gz"
             File json_out = filename_stat_json
      }
 }
 
 task make_output{
- 	String outdir
+ 	String outdir = "all_output"
 	Array[File] stats
 	Array[File] stats2
 	Array[File] filtered
 	String container
- 
+
  	command<<<
 			mkdir -p ${outdir}
 			for i in ${sep=' ' stats}
@@ -126,15 +125,18 @@ task make_output{
 			do
 				cp -f $i ${outdir}
 			done
- 			chmod 764 -R ${outdir}
- 	>>>
+            chmod 764 -R ${outdir}
+    >>>
+
 	runtime {
             docker: container
-            memory: "1 GiB"
+            memory: "1G"
+            time: "00:20:00"
             cpu:  1
-        }
+    }
+
 	output{
-		Array[String] fastq_files = glob("${outdir}/*.fastq*")
+		Array[File] fastq_files = glob("${outdir}/*.fastq*")
 	}
 }
 
